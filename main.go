@@ -165,7 +165,7 @@ func main() {
 	for {
 		success, found := CheckBlocks(targetVer, height, ACTIVATION_PERIOD)
 		percentage := float64(found) / TARGET_WINDOW * 100 / 1
-		log.Printf("Height: %d Percentage: %f%\n", height, percentage)
+		log.Printf("Height: %d Percentage: %f%%\n", height, percentage)
 
 		if !bActivated && success {
 			log.Printf("Block %d reached v%d activation.\n", height, targetVer)
