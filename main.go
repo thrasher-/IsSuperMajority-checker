@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -11,21 +12,22 @@ import (
 )
 
 const (
-	RPC_PORT           = 9332
-	RPC_USERNAME       = "user"
-	RPC_PASSWORD       = "pass"
-	RPC_HOST           = "127.0.0.1"
 	ACTIVATION_PERIOD  = 750
 	ENFORCEMENT_PERIOD = 950
 	TARGET_WINDOW      = 1000
 )
 
 var (
-	BlockIndex map[int]int
+	BlockIndex   map[int]int
+	VersionIndex map[int]string
+	RPCHost      string
+	RPCPort      int
+	RPCUsername  string
+	RPCPassword  string
 )
 
 func BuildURL() string {
-	return fmt.Sprintf("http://%s:%s@%s:%d", RPC_USERNAME, RPC_PASSWORD, RPC_HOST, RPC_PORT)
+	return fmt.Sprintf("http://%s:%s@%s:%d", RPCUsername, RPCPassword, RPCHost, RPCPort)
 }
 
 func SendHTTPGetRequest(url string, jsonDecode bool, result interface{}) (err error) {
@@ -155,31 +157,62 @@ func CheckBlocks(version, height, threshold int) (bool, int) {
 	return false, nFound
 }
 
+func BuildBIPVersionIndex() {
+	VersionIndex[3] = "BIP66"
+	VersionIndex[4] = "BIP65"
+}
+
+func GetBIPVersionIndexString(version int) (string, bool) {
+	val, ok := VersionIndex[version]
+	if !ok {
+		return "", false
+	}
+	return val, true
+}
+
 func main() {
 	BlockIndex = make(map[int]int)
-	startHeight := 800000
-	targetVer := 3
+	VersionIndex = make(map[int]string)
+	BuildBIPVersionIndex()
+
+	verbose := false
+	version, block := 0, 0
+	flag.StringVar(&RPCHost, "rpchost", "127.0.0.1", "The RPC host to connect to.")
+	flag.IntVar(&RPCPort, "rpcport", 9333, "The RPC port to connect to.")
+	flag.StringVar(&RPCUsername, "rpcuser", "user", "The RPC username.")
+	flag.StringVar(&RPCPassword, "rpcpass", "pass", "The RPC password.")
+	flag.IntVar(&version, "version", 3, "The block version to check.")
+	flag.IntVar(&block, "block", 810000, "Block height to start checking from.")
+	flag.BoolVar(&verbose, "verbose", false, "Toggle verbose reporting.")
+	flag.Parse()
+
+	versionStr, ok := GetBIPVersionIndexString(version)
+	if !ok {
+		log.Fatal("Unable to convert version to ")
+	}
+	log.Printf("RPC URL: %s", BuildURL())
+	log.Printf("Checking for block version %d (%s) activation height with start height %d.\n", version, versionStr, block)
 	bActivated := false
-	height := startHeight
+	height := block
 
 	for {
-		success, found := CheckBlocks(targetVer, height, ACTIVATION_PERIOD)
+		success, found := CheckBlocks(version, height, ACTIVATION_PERIOD)
 		percentage := float64(found) / TARGET_WINDOW * 100 / 1
-		log.Printf("Height: %d Percentage: %f%%\n", height, percentage)
+
+		if verbose {
+			log.Printf("Height: %d Percentage: %.2f%%\n", height, percentage)
+		}
 
 		if !bActivated && success {
-			log.Printf("Block %d reached v%d activation.\n", height, targetVer)
+			log.Printf("Block %d reached v%d activation.\n", height, version)
 			bActivated = true
 		}
 
-		success, found = CheckBlocks(targetVer, height, ENFORCEMENT_PERIOD)
+		success, found = CheckBlocks(version, height, ENFORCEMENT_PERIOD)
 		if success {
-			log.Printf("Block %d reached v%d enforcement.\n", height, targetVer)
+			log.Printf("Block %d reached v%d enforcement.\n", height, version)
 			break
 		}
 		height++
 	}
 }
-
-// 811879 v3
-// 918684 v4
