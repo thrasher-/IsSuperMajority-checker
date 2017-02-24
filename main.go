@@ -18,12 +18,13 @@ const (
 )
 
 var (
-	BlockIndex   map[int]int
-	VersionIndex map[int]string
-	RPCHost      string
-	RPCPort      int
-	RPCUsername  string
-	RPCPassword  string
+	BlockIndex     map[int]int
+	version, block int
+	verbose        bool
+	RPCHost        string
+	RPCPort        int
+	RPCUsername    string
+	RPCPassword    string
 )
 
 func BuildURL() string {
@@ -132,51 +133,56 @@ func GetBlockVersion(block int) (int, error) {
 	return int(version), nil
 }
 
-func CheckBlocks(version, height, threshold int) (bool, int) {
+func CheckBlocks(minVersion, height, threshold int) (bool, int, int) {
 	nFound := 0
 	blockVer := 0
 	var ok bool
 	var err error
+	lastBlock := 0
 
-	for i := height - TARGET_WINDOW; i < height; i++ {
-		blockVer, ok = BlockIndex[i]
+	for i := 0; i < TARGET_WINDOW && nFound < threshold && i >= 0; i++ {
+		blockVer, ok = BlockIndex[height]
 		if !ok {
-			blockVer, err = GetBlockVersion(i)
+			blockVer, err = GetBlockVersion(height)
 			if err != nil {
 				log.Fatal("Failed to obtain block version.")
 			}
-			BlockIndex[i] = blockVer
+			BlockIndex[height] = blockVer
 		}
-		if version == blockVer {
+		if blockVer >= minVersion {
 			nFound++
 		}
+		if blockVer == minVersion-1 {
+			if height > lastBlock {
+				lastBlock = height
+			}
+		}
+		height--
 	}
 	if nFound >= threshold {
-		return true, nFound
+		return true, nFound, lastBlock
 	}
-	return false, nFound
+	return false, nFound, lastBlock
 }
 
-func BuildBIPVersionIndex() {
-	VersionIndex[3] = "BIP66"
-	VersionIndex[4] = "BIP65"
-}
-
-func GetBIPVersionIndexString(version int) (string, bool) {
-	val, ok := VersionIndex[version]
-	if !ok {
-		return "", false
+func GetVersionBIPString(version int) string {
+	versionStr := ""
+	switch version {
+	case 2:
+		versionStr = "BIP34"
+	case 3:
+		versionStr = "BIP66"
+	case 4:
+		versionStr = "BIP65"
+	default:
+		versionStr = "NA"
 	}
-	return val, true
+	return versionStr
 }
 
 func main() {
 	BlockIndex = make(map[int]int)
-	VersionIndex = make(map[int]string)
-	BuildBIPVersionIndex()
 
-	verbose := false
-	version, block := 0, 0
 	flag.StringVar(&RPCHost, "rpchost", "127.0.0.1", "The RPC host to connect to.")
 	flag.IntVar(&RPCPort, "rpcport", 9333, "The RPC port to connect to.")
 	flag.StringVar(&RPCUsername, "rpcuser", "user", "The RPC username.")
@@ -186,31 +192,36 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "Toggle verbose reporting.")
 	flag.Parse()
 
-	versionStr, ok := GetBIPVersionIndexString(version)
-	if !ok {
-		log.Fatal("Unable to convert version to ")
-	}
+	versionStr := GetVersionBIPString(version)
 	log.Printf("RPC URL: %s", BuildURL())
 	log.Printf("Checking for block version %d (%s) activation height with start height %d.\n", version, versionStr, block)
 	bActivated := false
 	height := block
+	percentage := float64(0)
+	quit := false
 
 	for {
-		success, found := CheckBlocks(version, height, ACTIVATION_PERIOD)
-		percentage := float64(found) / TARGET_WINDOW * 100 / 1
-
+		if !bActivated {
+			success, found, _ := CheckBlocks(version, height, ACTIVATION_PERIOD)
+			percentage = float64(found) / TARGET_WINDOW * 100 / 1
+			if success {
+				log.Printf("Block %d reached version %d (%s) activation.\n", height+1, version, versionStr)
+				bActivated = true
+			}
+		} else {
+			success, found, last := CheckBlocks(version, height, ENFORCEMENT_PERIOD)
+			percentage = float64(found) / TARGET_WINDOW * 100 / 1
+			if success {
+				log.Printf("Block %d reached version %d (%s) enforcement.\n", height+1, version, versionStr)
+				log.Printf("Last version %d block: %d.\n", version-1, last)
+				quit = true
+			}
+		}
 		if verbose {
-			log.Printf("Height: %d Percentage: %.2f%%\n", height, percentage)
+			blockVer := BlockIndex[height]
+			log.Printf("Block height: %d Version: %d Percentage: %.2f%%\n", height, blockVer, percentage)
 		}
-
-		if !bActivated && success {
-			log.Printf("Block %d reached v%d activation.\n", height, version)
-			bActivated = true
-		}
-
-		success, found = CheckBlocks(version, height, ENFORCEMENT_PERIOD)
-		if success {
-			log.Printf("Block %d reached v%d enforcement.\n", height, version)
+		if quit {
 			break
 		}
 		height++
